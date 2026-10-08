@@ -387,24 +387,30 @@ async function confirmClear() {
 }
 
 
-// 导出
+// 导出：单只精灵 → 配置文件格式
+function petToExport(pet) {
+  return {
+    id: pet.id,
+    name: pet.name,
+    egg_groups: (pet.eggGroups || []).map((id) => defines.egg_groups[String(id)] || String(id)),
+    gender: pet.gender,
+    shiny: !!pet.shiny,
+    personality: pet.personality || null,
+    medals: {
+      body: pet.medals?.body || null,
+      voice: pet.medals?.voice || null,
+    },
+    note: pet.note || null,
+  }
+}
+
 function toExportFormat() {
   return {
     nestCount: store.nestCount,
-    inventory: store.inventory.map((pet) => ({
-      id: pet.id,
-      name: pet.name,
-      egg_groups: (pet.eggGroups || []).map((id) => defines.egg_groups[String(id)] || String(id)),
-      gender: pet.gender,
-      shiny: !!pet.shiny,
-      personality: pet.personality || null,
-      medals: {
-        body: pet.medals?.body || null,
-        voice: pet.medals?.voice || null,
-      },
-      note: pet.note || null,
-    })),
-    // ★新增：孵蛋界面所有窗口（窝数、筛选、雌性、推荐雄性、配对详情等）
+    inventory: store.inventory.map(petToExport),
+    // ★记录「上次录入」的精灵
+    lastAdded: lastAdded.value.map(petToExport),
+    // ★孵蛋界面所有窗口（窝数、筛选、雌性、推荐雄性、配对详情等）
     windows: JSON.parse(JSON.stringify(breedingState.tabs)),
     activeTabId: breedingState.activeTabId,
   }
@@ -443,13 +449,45 @@ function onImportFile(e) {
   reader.readAsText(file)
 }
 
+// 精灵特征签名：导入时用于把「上次录入」和仓库条目关联起来
+function petSignature(p) {
+  return JSON.stringify([
+    p.id,
+    p.gender,
+    !!p.shiny,
+    p.personality || '',
+    p.medals?.body || '',
+    p.medals?.voice || '',
+    p.note || '',
+    JSON.stringify(p.eggGroups || []),
+  ])
+}
+
+// 恢复「上次录入」：按特征匹配仓库条目、复用 uid，避免「确认」时重复添加
+function restoreLastAdded(raw, inventory, itemToPet) {
+  if (!Array.isArray(raw) || !raw.length) return []
+  const sigToUids = new Map()
+  inventory.forEach((p) => {
+    const sig = petSignature(p)
+    if (!sigToUids.has(sig)) sigToUids.set(sig, [])
+    sigToUids.get(sig).push(p.uid)
+  })
+  return raw.map((item) => {
+    const p = itemToPet(item)
+    const sig = petSignature(p)
+    const uids = sigToUids.get(sig)
+    if (uids && uids.length) p.uid = uids.shift()
+    return p
+  })
+}
+
 async function importData(data) {
   const idMap = {}
   Object.keys(defines.egg_groups).forEach((id) => {
     idMap[defines.egg_groups[id]] = Number(id)
   })
 
-  const inventory = (data.inventory || []).map((item) => ({
+  const itemToPet = (item) => ({
     id: item.id,
     name: item.name,
     eggGroups: (item.egg_groups || []).map((name) => idMap[name]).filter((v) => v !== undefined),
@@ -462,10 +500,15 @@ async function importData(data) {
     },
     note: item.note || null,
     uid: genUid(),
-  }))
+  })
 
+  const inventory = (data.inventory || []).map(itemToPet)
   store.nestCount = data.nestCount ?? 10
   store.inventory = inventory
+
+  // ★恢复「上次录入」
+  lastAdded.value = restoreLastAdded(data.lastAdded, inventory, itemToPet)
+  lastAddedUids.value = lastAdded.value.map((p) => p.uid)
 
   // ★导入覆盖孵蛋界面所有窗口（旧文件无 windows 字段时不动窗口，保持兼容）
   if (Array.isArray(data.windows)) {

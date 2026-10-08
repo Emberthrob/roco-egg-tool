@@ -163,6 +163,8 @@
         </div>
       </div>
     </teleport>
+
+    <div class="dev-notice">功能还在开发中</div>
   </div>
 </template>
 
@@ -935,4 +937,14 @@ h1 {
 .plan-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .plan-tab { padding: 7px 14px; border: 1px solid rgba(255,255,255,.3); border-radius: 8px; background: rgba(255,255,255,.1); color: rgba(255,255,255,.85); cursor: pointer; font-size: 13px; }
 .plan-tab.active { background: linear-gradient(135deg,#818cf8,#a78bfa); border-color: transparent; color: #fff; }
+.dev-notice {
+  margin-top: 40px;
+  padding: 28px 0;
+  text-align: center;
+  font-size: 34px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 6px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
 </style>
