@@ -136,7 +136,7 @@ import PersonalityPicker from '../components/PersonalityPicker.vue'
 import PersonalityFilterGroup from '../components/PersonalityFilterGroup.vue'
 import { breedingState, replaceTabs, isPetUsed, removePetFromAllTabs, clearAllTabs } from '../store/breeding'
 import { showAlert, showConfirm } from '../store/dialog'
-import { planState, clearPlan } from '../store/plan'
+import { planState, clearPlan, invalidateRoutes } from '../store/plan'
 
 
 const STORAGE_KEY = 'roco-storage'
@@ -346,8 +346,8 @@ async function onEditSave(updated) {
     if (planHasCommonGroup(updated)) {
       const ok = await showConfirm('修改该精灵可能会影响配窝计划，是否仍要修改？')
       if (!ok) return
-      clearPlan()
     }
+    invalidateRoutes(updated.uid)
   }
   store.inventory[i] = updated
 }
@@ -362,8 +362,8 @@ async function onEditRemove(pet) {
   if (planHasCommonGroup(pet)) {
     const ok = await showConfirm('删除该精灵可能会影响配窝计划，是否仍要删除？')
     if (!ok) return
-    clearPlan()
   }
+  invalidateRoutes(pet.uid)
   const i = store.inventory.findIndex((x) => x.uid === pet.uid)
   if (i > -1) store.inventory.splice(i, 1)
 }

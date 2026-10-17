@@ -8,10 +8,17 @@ function loadPlan() {
     const raw = localStorage.getItem(PLAN_KEY)
     if (raw) {
       const data = JSON.parse(raw)
+      const seen = new Set()
+      const planEntries = (data.planEntries || []).map((e) => {
+        let uid = e.uid
+        if (!uid || seen.has(uid)) uid = 'plan-' + Date.now() + '-' + Math.floor(Math.random() * 100000)
+        seen.add(uid)
+        return { ...e, uid }
+      })
       return {
         normalNests: data.normalNests ?? 10,
         academyNests: data.academyNests ?? 0,
-        planEntries: data.planEntries || [],
+        planEntries,
       }
     }
   } catch (e) {}
@@ -29,7 +36,7 @@ watch(planState, () => {
 }, { deep: true })
 
 let planSeq = 1
-export function nextPlanUid() { return 'plan-' + (planSeq++) }
+export function nextPlanUid() { return 'plan-' + Date.now() + '-' + Math.floor(Math.random() * 100000) }
 
 // ===== 通用判断 =====
 export function groupsCompatible(a, b) {
@@ -166,4 +173,12 @@ export function clearPlan() {
   planState.planEntries = []
   planState.normalNests = 10
   planState.academyNests = 0
+}
+
+// 孵化路线失效信号：仓库精灵改动后仅清空路线，不清空目标
+export const routeState = reactive({ revision: 0, pendingUids: [] })
+export function invalidateRoutes(uid = null) {
+  if (uid == null) routeState.pendingUids = [null]
+  else routeState.pendingUids.push(uid)
+  routeState.revision++
 }

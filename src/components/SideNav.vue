@@ -16,7 +16,7 @@
       <router-link to="/storage" @click="closeMenu">📦 精灵仓库</router-link>
       <router-link to="/breeding" @click="closeMenu">🥚 孵蛋配窝</router-link>
       <router-link to="/pet-dex" @click="closeMenu">📖 精灵大全</router-link>
-      <router-link to="/inheritance" @click="closeMenu">🧬 配窝计划</router-link>
+      <router-link to="/inheritance" @click="closeMenu">🧬 孵蛋计划</router-link>
       <router-link to="/about" @click="closeMenu">ℹ️ 关于</router-link>
     </nav>
 

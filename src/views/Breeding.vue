@@ -16,12 +16,13 @@
         @click="activeTabId = tab.id">
         <span>{{ tab.name }}</span>
         <span class="tab-meta">(普通{{ tab.nestCount }}·学院{{ tab.academyCount }})</span>
+        <span v-if="tab.locked" class="tab-lock">🔒</span>
         <button class="tab-close" @click.stop="removeTab(tab)">×</button>
       </div>
       <button class="add-tab" :disabled="tabs.length >= 5" @click="addTab">＋</button>
     </div>
 
-    <div v-for="tab in tabs" v-show="tab.id === activeTabId" :key="'p-' + tab.id" class="tab-panel">
+    <div v-for="tab in tabs" v-show="tab.id === activeTabId" :key="'p-' + tab.id" class="tab-panel" :class="{ 'locked-tab': tab.locked }">
       <div class="settings-row">
         <label>普通精灵窝 <input type="number" v-model.number="tab.nestCount" min="0" @change="clampTab(tab)" /></label>
         <label>学院精灵窝 <input type="number" v-model.number="tab.academyCount" min="0" max="1"
@@ -152,11 +153,11 @@
 </template>
 
 <script setup>
-import { ref, computed, toRefs } from 'vue'
+import { ref, computed, toRefs, onMounted, onActivated } from 'vue'
 import defines from '../data/defines.json'
 import medalsData from '../data/medals.json'
 import personalitiesData from '../data/personalities.json'
-import { breedingState, createTab, nextFemaleId, getOccupiedUids, clearTabPets, resetMaleFilter } from '../store/breeding'
+import { breedingState, createTab, nextFemaleId, getOccupiedUids, clearTabPets, resetMaleFilter, syncLockedTabs } from '../store/breeding'
 import { showAlert } from '../store/dialog'
 import {
   getPetName, getEggGroups, loadInventory, computeRecommendation, recomputeCoverage, effectiveGroups,
@@ -219,6 +220,8 @@ function priorityGroups(tab) {
 
 const remainingNormal = computed(() => MAX_NORMAL - tabs.value.reduce((s, t) => s + (t.nestCount || 0), 0))
 const remainingAcademy = computed(() => (hasAcademy.value ? MAX_ACADEMY : 0) - tabs.value.reduce((s, t) => s + (t.academyCount || 0), 0))
+onMounted(() => syncLockedTabs())
+onActivated(() => syncLockedTabs())
 
 function onAcademyToggle() {
   if (!hasAcademy.value) {
@@ -231,8 +234,10 @@ function onAcademyToggle() {
 
 function addTab() {
   if (tabs.value.length >= 5) return
+  const remaining = remainingNormal.value
+  if (remaining <= 0) { showAlert('可用普通精灵窝已用完，无法创建新窗口。'); return }
   const tab = createTab()
-  tab.nestCount = 0
+  tab.nestCount = remaining
   tabs.value.push(tab)
   activeTabId.value = tab.id
 }
@@ -1045,4 +1050,7 @@ h1 {
 .warn {
   color: #fca5a5;
 }
+.locked-tab .settings-row, .locked-tab .gen-bar { pointer-events: none; opacity: 0.55; }
+.locked-tab .nest-item { pointer-events: none; }
+.tab-lock { font-size: 12px; }
 </style>

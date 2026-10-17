@@ -1,4 +1,5 @@
 import { reactive, watch } from 'vue'
+import { loadInventory } from '../utils/breeding'
 
 let tabSeq = 1
 let femaleSeq = 1
@@ -21,6 +22,7 @@ function _createTab() {
     occupiedFemales: [], // 占用的仓库雌性 uid
     occupiedMales: [],   // 占用的仓库雄性 uid
     priorityPool: [],  // ★优先池：明确存储的蛋组数组（最多2个）
+    locked: false,     // 来自「孵蛋队列」的只读窗口（仅生成位置图可用）
 
   }
 }
@@ -92,6 +94,18 @@ export function isPetUsed(uid) {
     (t.females || []).some((f) => f.uid === uid) ||
     (t.resultMales || []).some((m) => m.uid === uid)
   )
+}
+
+// 同步「孵蛋队列」只读窗口：仓库中精灵被删除则删除对应窗口
+export function syncLockedTabs() {
+  const inv = loadInventory()
+  const uidSet = new Set((inv || []).map((p) => p.uid).filter(Boolean))
+  breedingState.tabs = breedingState.tabs.filter((t) => {
+    if (!t.locked) return true
+    const uids = [...(t.occupiedFemales || []), ...(t.occupiedMales || [])].filter(Boolean)
+    if (!uids.length) return true
+    return uids.every((u) => uidSet.has(u))
+  })
 }
 
 // 从所有窗口移除某仓库精灵的引用（删除仓库精灵时联动）：

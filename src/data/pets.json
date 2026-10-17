@@ -6258,12 +6258,12 @@
     "special_tags": []
   },
   {
-    "id": 3769,
+    "id": 3776,
     "name": "布灵布灵",
     "egg_groups": [
       7
     ],
-    "evolves_from_id": 3679,
+    "evolves_from_id": 3769,
     "has_shiny": 104,
     "special_tags": []
   },
