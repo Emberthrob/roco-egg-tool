@@ -144,7 +144,7 @@
       :can-set-academy="actionCanSetAcademy" @priority="onSetPriority" @academy="onSetAcademy"
       @remove="onActionRemove" />
     <ReplaceMaleModal v-model="replaceVisible" :male="replaceTarget || {}" :candidates="replaceCandidates"
-      @replace="onReplace" />
+      :can-set-academy="replaceCanSetAcademy" @replace="onReplace" @academy="onSetAcademyMale" />
 
     <PlacementMap v-if="placeMapTab" v-model="placeMapVisible" :females="placeMapTab.females"
       :males="placeMapTab.resultMales" />
@@ -157,7 +157,7 @@ import { ref, computed, toRefs, onMounted, onActivated } from 'vue'
 import defines from '../data/defines.json'
 import medalsData from '../data/medals.json'
 import personalitiesData from '../data/personalities.json'
-import { breedingState, createTab, nextFemaleId, getOccupiedUids, clearTabPets, resetMaleFilter, syncLockedTabs } from '../store/breeding'
+import { breedingState, createTab, nextFemaleId, getOccupiedUids, clearTabPets, resetMaleFilter, syncLockedTabs, withWatchSuppressed } from '../store/breeding'
 import { showAlert } from '../store/dialog'
 import {
   getPetName, getEggGroups, loadInventory, computeRecommendation, recomputeCoverage, effectiveGroups,
@@ -225,9 +225,9 @@ onActivated(() => syncLockedTabs())
 
 function onAcademyToggle() {
   if (!hasAcademy.value) {
-    tabs.value.forEach((t) => {
-      t.academyCount = 0
-      t.females.forEach((f) => { f.useAcademy = false })
+    // 取消勾选：释放所有窗口的学院窝占用，并归还普通窝、同步配对详情
+    withWatchSuppressed(() => {
+      releaseAllAcademy()
     })
   }
 }
@@ -331,6 +331,10 @@ function onRemoveFemale(f) {
       const u = pickerTab.occupiedFemales.indexOf(removed.uid)
       if (u > -1) pickerTab.occupiedFemales.splice(u, 1)
     }
+    if (removed.useAcademy) {
+      pickerTab.academyCount = 0
+      pickerTab.nestCount = (pickerTab.nestCount || 0) + 1
+    }
   }
   syncPriorityPool(pickerTab) // ★删除后同步优先池
   pickerTab.result = null
@@ -347,8 +351,9 @@ const actionCanSetAcademy = ref(false)
 
 function openFemaleAction(f) {
   actionFemale.value = f
-  const tab = currentTab()
-  actionCanSetAcademy.value = tab.academyCount > 0 && (f.useAcademy || !tab.females.some((x) => x.useAcademy))
+  // 学院窝选项：按右上角「可用学院精灵窝」判断（>0 即可分配）；
+  // 本精灵已占用学院窝时仍显示「取消学院精灵窝」
+  actionCanSetAcademy.value = f.useAcademy || remainingAcademy.value > 0
   actionVisible.value = true
 }
 
@@ -415,7 +420,21 @@ function syncPriorityPool(tab) {
 function onSetAcademy() {
   const f = actionFemale.value
   if (!f) return
-  f.useAcademy = !f.useAcademy
+  const tab = currentTab()
+  withWatchSuppressed(() => {
+    if (!f.useAcademy) {
+      // 分配学院窝：先释放其他窗口/精灵的占用，再占用到当前雌性，并归还普通窝
+      releaseAllAcademy()
+      f.useAcademy = true
+      tab.academyCount = 1
+      tab.nestCount = Math.max(0, (tab.nestCount || 0) - 1)
+    } else {
+      // 取消学院窝
+      f.useAcademy = false
+      tab.academyCount = 0
+      tab.nestCount = (tab.nestCount || 0) + 1
+    }
+  })
   actionVisible.value = false
 }
 function onActionRemove() {
@@ -429,6 +448,10 @@ function onActionRemove() {
     if (removed.uid) {
       const u = tab.occupiedFemales.indexOf(removed.uid)
       if (u > -1) tab.occupiedFemales.splice(u, 1)
+    }
+    if (removed.useAcademy) {
+      tab.academyCount = 0
+      tab.nestCount = (tab.nestCount || 0) + 1
     }
   }
   syncPriorityPool(tab)
@@ -501,6 +524,7 @@ function generate(tab) {
 const replaceVisible = ref(false)
 const replaceTarget = ref(null)
 const replaceCandidates = ref([])
+const replaceCanSetAcademy = ref(false)
 const placeMapVisible = ref(false)
 const placeMapTab = ref(null)
 
@@ -511,6 +535,7 @@ function openPlacement(tab) {
 
 function openReplace(m) {
   replaceTarget.value = m
+  replaceCanSetAcademy.value = m.useAcademy || remainingAcademy.value > 0
   const tab = currentTab()
   const occupied = getOccupiedUids()
   let list = loadInventory()
@@ -567,6 +592,12 @@ function onReplace(newItem) {
     medals: newItem.medals || {},
   })
   // 重新评估覆盖
+  refreshCoverage(tab)
+  replaceVisible.value = false
+}
+
+// 重新计算雄性配对详情 / 覆盖 / 学院窝覆盖蛋组
+function refreshCoverage(tab) {
   const females = tab.females.map((f) => ({
     uid: f.uid, id: f.id, name: f.note || f.name, eggGroups: f.eggGroups,
     isShiny: !!f.shiny, personality: f.personality || null, medals: f.medals || {},
@@ -576,6 +607,41 @@ function onReplace(newItem) {
   tab.maleCoverDetails = cov.maleCoverDetails
   tab.uncoveredFemales = cov.uncoveredFemales
   tab.academyCoveredGroups = cov.academyCoveredGroups
+}
+
+// 释放所有窗口已占用的学院窝，并归还对应普通窝
+function releaseAllAcademy() {
+  tabs.value.forEach((t) => {
+    let released = false
+    ;(t.females || []).forEach((x) => { if (x.useAcademy) { x.useAcademy = false; released = true } })
+    ;(t.resultMales || []).forEach((m) => { if (m.useAcademy) { m.useAcademy = false; released = true } })
+    if (released) {
+      t.academyCount = 0
+      t.nestCount = (t.nestCount || 0) + 1
+      refreshCoverage(t)
+    }
+  })
+}
+
+// 雄性精灵模块：分配 / 取消学院窝
+function onSetAcademyMale() {
+  const m = replaceTarget.value
+  if (!m) return
+  const tab = currentTab()
+  withWatchSuppressed(() => {
+    if (!m.useAcademy) {
+      releaseAllAcademy()
+      m.useAcademy = true
+      tab.academyCount = 1
+      tab.nestCount = Math.max(0, (tab.nestCount || 0) - 1)
+    } else {
+      m.useAcademy = false
+      tab.academyCount = 0
+      tab.nestCount = (tab.nestCount || 0) + 1
+    }
+  })
+  refreshCoverage(tab)
+  replaceCanSetAcademy.value = m.useAcademy || remainingAcademy.value > 0
   replaceVisible.value = false
 }
 </script>

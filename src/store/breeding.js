@@ -164,6 +164,12 @@ export function replaceTabs(newTabs, activeTabId) {
   _suppressWatch = false
 }
 
+// 手动分配/释放学院窝时同步窗口窝数，但不清空已生成的方案
+export function withWatchSuppressed(fn) {
+  _suppressWatch = true
+  try { return fn() } finally { _suppressWatch = false }
+}
+
 // ===== 监听：窝数 / 筛选变化 → 清空对应窗口已推荐雄性 =====
 // 用 sync watch + _suppressWatch，保证「导入覆盖窗口」不会被误判成手动改动而清空方案
 watch(

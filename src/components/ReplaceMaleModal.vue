@@ -6,6 +6,9 @@
           <h3>替换雄性：<span class="hl">{{ male.name }}</span></h3>
           <button class="x" @click="close">×</button>
         </div>
+        <button v-if="canSetAcademy" class="academy-btn" :class="{ on: male.useAcademy }" @click="emit('academy')">
+          {{ male.useAcademy ? '取消学院精灵窝' : '分配学院精灵窝' }}
+        </button>
         <div class="list" v-if="candidates.length">
           <button v-for="c in candidates" :key="c.uid" class="item" @click="replace(c)">
             <span class="c-name">{{ c.name }}</span>
@@ -30,8 +33,9 @@ const visible = defineModel({ type: Boolean, default: false })
 defineProps({
   male: { type: Object, required: true },
   candidates: { type: Array, default: () => [] },
+  canSetAcademy: { type: Boolean, default: false },
 })
-const emit = defineEmits(['replace'])
+const emit = defineEmits(['replace', 'academy'])
 
 const bodyMedals = medalsData.body
 const voiceMedals = medalsData.voice
@@ -59,6 +63,9 @@ function close() { visible.value = false }
 .head h3 { margin: 0; font-size: 16px; }
 .hl { color: #c4b5fd; }
 .x { border: none; background: none; color: rgba(255,255,255,.6); font-size: 22px; cursor: pointer; }
+.academy-btn { padding: 10px; border: 1px solid rgba(52,211,153,.5); border-radius: 10px; background: rgba(52,211,153,.12); color: #6ee7b7; cursor: pointer; font-size: 14px; }
+.academy-btn:hover { background: rgba(52,211,153,.2); }
+.academy-btn.on { border-color: rgba(252,165,165,.5); color: #fca5a5; background: rgba(248,113,113,.12); }
 .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; overflow-y: auto; max-height: 60vh; }
 .item { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px; min-height: 110px; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: rgba(255,255,255,.1); cursor: pointer; color: #fff; font-size: 12px; }
 .item:hover { border-color: #c4b5fd; }

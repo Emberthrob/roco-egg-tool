@@ -136,7 +136,7 @@ import PersonalityPicker from '../components/PersonalityPicker.vue'
 import PersonalityFilterGroup from '../components/PersonalityFilterGroup.vue'
 import { breedingState, replaceTabs, isPetUsed, removePetFromAllTabs, clearAllTabs } from '../store/breeding'
 import { showAlert, showConfirm } from '../store/dialog'
-import { planState, clearPlan, invalidateRoutes } from '../store/plan'
+import { planState, clearPlan, invalidateRoutes, nextPlanUid } from '../store/plan'
 
 
 const STORAGE_KEY = 'roco-storage'
@@ -413,6 +413,12 @@ function toExportFormat() {
     // ★孵蛋界面所有窗口（窝数、筛选、雌性、推荐雄性、配对详情等）
     windows: JSON.parse(JSON.stringify(breedingState.tabs)),
     activeTabId: breedingState.activeTabId,
+    // ★孵蛋计划全部数据（目标精灵、普通窝数、学院窝数）
+    plan: {
+      normalNests: planState.normalNests,
+      academyNests: planState.academyNests,
+      planEntries: JSON.parse(JSON.stringify(planState.planEntries)),
+    },
   }
 }
 
@@ -514,10 +520,20 @@ async function importData(data) {
   if (Array.isArray(data.windows)) {
     replaceTabs(data.windows, data.activeTabId)
   }
-  if (planState.planEntries.length) {
-    clearPlan()
-    await showAlert('导入完成，配窝计划已清空。')
+  // ★导入孵蛋计划全部数据（旧文件无 plan 字段时保持兼容，不清空计划）
+  if (data.plan && typeof data.plan === 'object') {
+    const seen = new Set()
+    planState.planEntries = (data.plan.planEntries || []).map((e) => {
+      let uid = e.uid
+      if (!uid || seen.has(uid)) uid = nextPlanUid()
+      seen.add(uid)
+      return { ...e, uid }
+    })
+    planState.normalNests = data.plan.normalNests ?? 10
+    planState.academyNests = data.plan.academyNests ?? 0
+    invalidateRoutes()
   }
+  await showAlert('导入完成。')
 }
 
 
