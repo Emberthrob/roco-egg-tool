@@ -136,7 +136,7 @@ import PersonalityPicker from '../components/PersonalityPicker.vue'
 import PersonalityFilterGroup from '../components/PersonalityFilterGroup.vue'
 import { breedingState, replaceTabs, isPetUsed, removePetFromAllTabs, clearAllTabs } from '../store/breeding'
 import { showAlert, showConfirm } from '../store/dialog'
-import { planState, clearPlan, invalidateRoutes, nextPlanUid } from '../store/plan'
+import { planState, clearPlan, invalidateRoutes, nextPlanUid, routeStore } from '../store/plan'
 
 
 const STORAGE_KEY = 'roco-storage'
@@ -400,6 +400,7 @@ function petToExport(pet) {
       body: pet.medals?.body || null,
       voice: pet.medals?.voice || null,
     },
+    uid: pet.uid || null,
     note: pet.note || null,
   }
 }
@@ -419,6 +420,8 @@ function toExportFormat() {
       academyNests: planState.academyNests,
       planEntries: JSON.parse(JSON.stringify(planState.planEntries)),
     },
+    // ★已生成的孵化路线
+    routes: JSON.parse(JSON.stringify(routeStore.map)),
   }
 }
 
@@ -505,7 +508,7 @@ async function importData(data) {
       voice: item.medals?.voice || null,
     },
     note: item.note || null,
-    uid: genUid(),
+    uid: item.uid || genUid(),
   })
 
   const inventory = (data.inventory || []).map(itemToPet)
@@ -531,8 +534,10 @@ async function importData(data) {
     })
     planState.normalNests = data.plan.normalNests ?? 10
     planState.academyNests = data.plan.academyNests ?? 0
-    invalidateRoutes()
   }
+  // ★导入已生成的孵化路线（旧文件无 routes 字段时清空，保持兼容）
+  routeStore.map = (data.routes && typeof data.routes === 'object') ? data.routes : {}
+  routeStore.stamp++
   await showAlert('导入完成。')
 }
 

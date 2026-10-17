@@ -78,12 +78,39 @@ function dirB(pet, target) {
 
 const DIR_LABEL = { c: 'C', m: 'M', b: 'B' }
 
-// 优先复用已选用的雄性（uid 去重，不影响路线长度，仅在同性别/同方向内重排）
-function preferUsed(list, usedMaleUids) {
-  if (!usedMaleUids || !usedMaleUids.size) return list
-  const used = list.filter((p) => p.uid && usedMaleUids.has(p.uid))
-  const rest = list.filter((p) => !(p.uid && usedMaleUids.has(p.uid)))
-  return [...used, ...rest]
+// 方向感知的雄性分配器：同方向尽量复用同一只，跨方向尽量互相避开
+function createMaleAllocator() {
+  const owner = new Map() // uid -> 'c' | 'm' | 'b'
+  const FALLBACK = ['b', 'c', 'm'] // 回退优先级：B > C > M
+  return {
+    owner,
+    claim(uid, dir) {
+      if (uid && dir && !owner.has(uid)) owner.set(uid, dir)
+    },
+    rank(list, dir) {
+      if (!owner.size) return list
+      const own = []
+      const unused = []
+      const buckets = { b: [], c: [], m: [] }
+      for (const p of list) {
+        const u = p.uid
+        const od = u ? owner.get(u) : undefined
+        if (u && od === dir) own.push(p)
+        else if (!u || !od) unused.push(p)
+        else if (buckets[od]) buckets[od].push(p)
+        else unused.push(p)
+      }
+      const fb = []
+      for (const d of FALLBACK) if (d !== dir) fb.push(...buckets[d])
+      return [...own, ...unused, ...fb]
+    },
+  }
+}
+
+// 按分配器对候选雄性排序（同方向 > 未使用 > 其他方向 B>C>M）
+function preferUsed(list, allocator, dir) {
+  if (!allocator) return list
+  return allocator.rank(list, dir)
 }
 
 let seq = 0
@@ -326,10 +353,10 @@ function propagate(flag, genderPref, target, inv, targetGroups, ctx = {}) {
 
   const compatT = (g) => groupsCompatible(g, targetGroups)
   const dirLabel = DIR_LABEL[flag]
-  const usedMaleUids = ctx.usedMaleUids || new Set()
+  const allocator = ctx.allocator || createMaleAllocator()
 
-  const direct = preferUsed(dirPets.filter((p) => p.gender === genderPref && compatT(p.eggGroups)), usedMaleUids)[0]
-  if (direct) { if (direct.uid) usedMaleUids.add(direct.uid); return { carrier: petNode(direct, dirLabel), blocks: [], note: '' } }
+  const direct = preferUsed(dirPets.filter((p) => p.gender === genderPref && compatT(p.eggGroups)), allocator, flag)[0]
+  if (direct) { if (direct.uid && direct.gender === 'male') allocator.claim(direct.uid, flag); return { carrier: petNode(direct, dirLabel), blocks: [], note: '' } }
 
   const raceGroups = {}
   const ownedFemaleRaces = new Set()
@@ -338,8 +365,8 @@ function propagate(flag, genderPref, target, inv, targetGroups, ctx = {}) {
     if (p.gender === 'female') ownedFemaleRaces.add(p.id)
   })
 
-  const maleSources = preferUsed(dirPets.filter((p) => p.gender === 'male'), usedMaleUids)
-  const sources = [...maleSources, ...preferUsed(dirPets.filter((p) => p.gender !== 'male'), usedMaleUids)]
+  const maleSources = preferUsed(dirPets.filter((p) => p.gender === 'male'), allocator, flag)
+  const sources = [...maleSources, ...dirPets.filter((p) => p.gender !== 'male')]
 
   for (const source of sources) {
     const shortPath = findShortestPath(source.id, targetGroups, genderPref, ownedFemaleRaces)
@@ -348,12 +375,12 @@ function propagate(flag, genderPref, target, inv, targetGroups, ctx = {}) {
 
     const blocks = []
     let curCarrier = petNode(source, dirLabel)
-    if (source.uid) usedMaleUids.add(source.uid)
+    if (source.uid && source.gender === 'male') allocator.claim(source.uid, flag)
 
     let hasUpstreamMissing = false
     if (source.gender === 'female') {
       // 雌性来源先转雄性（传递必须以父本进行，子代种族=母本）
-      const spouse = preferUsed(inv.filter((p) => p.gender === 'male' && groupsCompatible(p.eggGroups, raceGroups[source.id] || [])), usedMaleUids)[0]
+      const spouse = preferUsed(inv.filter((p) => p.gender === 'male' && groupsCompatible(p.eggGroups, raceGroups[source.id] || [])), allocator, null)[0]
       const fatherNode = spouse ? petNode(spouse, '') : missingNode(source.id, 'male', 'father')
       const motherNode = curCarrier
       if (!spouse) hasUpstreamMissing = true
@@ -389,7 +416,7 @@ function propagate(flag, genderPref, target, inv, targetGroups, ctx = {}) {
       // 最后一步已按需产出目标性别的载体，直接复用，避免多余的「转换性别」块
       let carrier = curCarrier
       if (genderPref === 'female' && lastIndex === 0) {
-        const spouse = preferUsed(inv.filter((p) => p.gender === 'female' && groupsCompatible(p.eggGroups, raceGroups[endRace] || [])), usedMaleUids)[0]
+        const spouse = inv.filter((p) => p.gender === 'female' && groupsCompatible(p.eggGroups, raceGroups[endRace] || []))[0]
         const fatherNode = carrier
         const motherNode = spouse ? petNode(spouse, '') : missingNode(endRace, 'female', 'mother')
         const femaleChild = carrierNode(endRace, 'female', dirLabel, target, { tag: '转换产物' })
@@ -523,7 +550,7 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
   const tGroups = (target.eggGroups && target.eggGroups.length) ? target.eggGroups : (T?.egg_groups || [])
   const blocks = []
   const notes = []
-  const usedMaleUids = new Set()
+  const allocator = createMaleAllocator()
   const femaleDedup = !!options.femaleDedup
   const usedFemaleUids = options.usedFemaleUids || null
 
@@ -547,7 +574,7 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
   const TcanFemale = canBeGender(T, 'female')
 
   if (hasNoRequirement) {
-    const anyMale = preferUsed(inv.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), usedMaleUids)[0]
+    const anyMale = preferUsed(inv.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), allocator, null)[0]
     const mother = tFemale
       ? petNode(tFemale, '')
       : missingNode(target.id, 'female', 'mother')
@@ -571,7 +598,7 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
   let mother = null
 
   if (tFemaleB) {
-    const anyMale = preferUsed(inv.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), usedMaleUids)[0]
+    const anyMale = preferUsed(inv.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), allocator, null)[0]
     mother = petNode(tFemaleB, 'B')
     father = anyMale ? petNode(anyMale, anyMale.b ? 'B' : anyMale.c ? 'C' : anyMale.m ? 'M' : '') : unknownNode('male', 'father')
   } else if (tMaleB) {
@@ -581,12 +608,12 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
     const bPets = inv.filter((p) => p.b)
     const bFlag = (needC && needM) ? 'b' : (needC ? 'c' : 'm')
     const bDirLabel = DIR_LABEL[bFlag]
-    const bDirect = preferUsed(bPets.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), usedMaleUids)[0]
+    const bDirect = preferUsed(bPets.filter((p) => p.gender === 'male' && compatT(p.eggGroups)), allocator, 'b')[0]
     if (bDirect) {
       father = petNode(bDirect, bDirLabel)
       mother = tFemale ? petNode(tFemale, tFemale.b ? 'B' : tFemale.c ? 'C' : tFemale.m ? 'M' : '') : missingNode(target.id, 'female', 'mother')
     } else if (bPets.length) {
-      const carrierB = propagate(bFlag, 'male', target, inv, tGroups, { usedMaleUids })
+      const carrierB = propagate(bFlag, 'male', target, inv, tGroups, { allocator })
       if (carrierB) {
         blocks.push(...carrierB.blocks)
         if (carrierB.note) notes.push(carrierB.note)
@@ -603,9 +630,15 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
       // 优化：C 源和 M 源都是目标种族，一雌一雄 → 直接自交
       const tC = inv.filter((p) => p.id === target.id && p.c)
       const tM = inv.filter((p) => p.id === target.id && p.m)
-      const selfMale = tC.find((p) => p.gender === 'male') || tM.find((p) => p.gender === 'male')
-      const selfFemale = tC.find((p) => p.gender === 'female') || tM.find((p) => p.gender === 'female')
-      if (selfMale && selfFemale && selfMale.uid !== selfFemale.uid) {
+      const cMaleSrc = tC.find((p) => p.gender === 'male')
+      const cFemaleSrc = tC.find((p) => p.gender === 'female')
+      const mMaleSrc = tM.find((p) => p.gender === 'male')
+      const mFemaleSrc = tM.find((p) => p.gender === 'female')
+      // 必须一雌一雄，且一个来自 C 源（负责性格）、一个来自 M 源（负责奖牌）
+      let selfMale = null, selfFemale = null
+      if (cMaleSrc && mFemaleSrc && cMaleSrc.uid !== mFemaleSrc.uid) { selfMale = cMaleSrc; selfFemale = mFemaleSrc }
+      else if (mMaleSrc && cFemaleSrc && mMaleSrc.uid !== cFemaleSrc.uid) { selfMale = mMaleSrc; selfFemale = cFemaleSrc }
+      if (selfMale && selfFemale) {
         const fdir = selfMale.b ? 'B' : (selfMale.c ? 'C' : 'M')
         const mdir = selfFemale.b ? 'B' : (selfFemale.c ? 'C' : 'M')
         const sf = petNode(selfMale, fdir)
@@ -618,10 +651,10 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
         if (femaleDedup && usedFemaleUids && usedFemaleUids.size) dedupChainFemales(blocks, usedFemaleUids, inv); linkBlocks(blocks)
         return { solvable: true, blocks, notes, target }
       }
-      const cMale = propagate('c', 'male', target, inv, tGroups, { usedMaleUids })
-      const mFemale = propagate('m', 'female', target, inv, tGroups, { usedMaleUids })
-      const mMale = propagate('m', 'male', target, inv, tGroups, { usedMaleUids })
-      const cFemale = propagate('c', 'female', target, inv, tGroups, { usedMaleUids })
+      const cMale = propagate('c', 'male', target, inv, tGroups, { allocator })
+      const mFemale = propagate('m', 'female', target, inv, tGroups, { allocator })
+      const mMale = propagate('m', 'male', target, inv, tGroups, { allocator })
+      const cFemale = propagate('c', 'female', target, inv, tGroups, { allocator })
 
       let c = null, m = null
       const a1 = cMale && mFemale ? { c: cMale, m: mFemale, cost: cMale.blocks.length + mFemale.blocks.length } : null
@@ -647,14 +680,14 @@ export function computeHatchRoute(target, inventoryOverride, options = {}) {
       father = merge.child
       mother = tFemale ? petNode(tFemale, tFemale.b ? 'B' : tFemale.c ? 'C' : tFemale.m ? 'M' : '') : missingNode(target.id, 'female', 'mother')
     } else if (needC) {
-      const c = propagate('c', 'male', target, inv, tGroups, { usedMaleUids })
+      const c = propagate('c', 'male', target, inv, tGroups, { allocator })
       if (!c) return { solvable: false, reason: '无法将性格方向传递到与目标可配的种族。', blocks, notes, target }
       blocks.push(...c.blocks)
       if (c.note) notes.push(c.note)
       father = c.carrier
       mother = tFemale ? petNode(tFemale, tFemale.b ? 'B' : tFemale.c ? 'C' : tFemale.m ? 'M' : '') : missingNode(target.id, 'female', 'mother')
     } else {
-      const m = propagate('m', 'male', target, inv, tGroups, { usedMaleUids })
+      const m = propagate('m', 'male', target, inv, tGroups, { allocator })
       if (!m) return { solvable: false, reason: '无法将奖牌方向传递到与目标可配的种族。', blocks, notes, target }
       blocks.push(...m.blocks)
       if (m.note) notes.push(m.note)

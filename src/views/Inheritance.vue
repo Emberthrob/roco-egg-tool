@@ -268,10 +268,10 @@
               <div v-for="(g, gi) in queueGroups.groups" :key="'g' + gi" class="qg-group">
                 <div class="qg-group-head">第 {{ gi + 1 }} 组 · 1 只雄性 + {{ g.females.length }} 只雌性</div>
                 <div class="qg-group-body">
-                  <div class="qg-mod" :class="{ academy: isAcademy(g.male.uid) }" @click="toggleAcademy(g.male.uid)">
+                  <div class="qg-mod" :class="{ academy: isAcademy(nodeKey(g.male)) }" @click="toggleAcademy(nodeKey(g.male))">
                     <NodeCard :node="g.male" />
                   </div>
-                  <div v-for="f in g.females" :key="nodeKey(f)" class="qg-mod" :class="{ academy: isAcademy(f.uid) }" @click="toggleAcademy(f.uid)">
+                  <div v-for="f in g.females" :key="nodeKey(f)" class="qg-mod" :class="{ academy: isAcademy(nodeKey(f)) }" @click="toggleAcademy(nodeKey(f))">
                     <NodeCard :node="f" />
                   </div>
                 </div>
@@ -296,7 +296,7 @@ import defines from '../data/defines.json'
 import medalsData from '../data/medals.json'
 import personalitiesData from '../data/personalities.json'
 import PersonalityPicker from '../components/PersonalityPicker.vue'
-import { planState, nextPlanUid, checkLevel1, checkLevel2, checkLevel3, minEggGroupSet, routeState } from '../store/plan'
+import { planState, nextPlanUid, checkLevel1, checkLevel2, checkLevel3, minEggGroupSet, routeState, routeStore } from '../store/plan'
 import { showAlert, showConfirm } from '../store/dialog'
 import HatchRouteView from '../components/HatchRouteView.vue'
 import MissingPetModal from '../components/MissingPetModal.vue'
@@ -407,8 +407,20 @@ function processRouteInvalidation() {
   })
 }
 watch(() => routeState.revision, () => { nextTick(processRouteInvalidation) })
-onActivated(processRouteInvalidation)
 const routes = ref({})
+let lastRouteStamp = 0
+onActivated(() => {
+  processRouteInvalidation()
+  // 导入后路线由 routeStore 更新，这里同步回本地 routes
+  if (routeStore.stamp !== lastRouteStamp) {
+    lastRouteStamp = routeStore.stamp
+    routes.value = routeStore.map
+    if (Object.keys(routes.value).length) {
+      routeGenerated.value = true
+      routeVisible.value = true
+    }
+  }
+})
 const activeRouteUid = ref('')
 const activeEntry = computed(() => planEntries.value.find((e) => e.uid === activeRouteUid.value) || planEntries.value[0] || null)
 watch(planEntries, (list) => {
@@ -435,6 +447,8 @@ function generateRoutes(resetReplacements) {
     }
   })
   routes.value = map
+  routeStore.map = map
+  routeStore.stamp++
   routeGenerated.value = true
   routeVisible.value = true
   if (!activeRouteUid.value && planEntries.value.length) activeRouteUid.value = planEntries.value[0].uid
@@ -586,16 +600,47 @@ async function onBlockClick(id) {
     remainUsed = remain.reduce((s, sid) => { const b = blocks.find((x) => x.id === sid); return s + (b ? blockCost(b) : 0) }, 0)
   }
 
+  let nextIds = null
   if (toRemove.length) {
     const ok = await showConfirm('该块与已选取的块发生名额冲突，是否替换已选取的块？')
     if (!ok) return
-    const after = cur.filter((sid) => !toRemove.includes(sid))
-    after.push(id)
-    setSelectedIds(after)
+    nextIds = cur.filter((sid) => !toRemove.includes(sid))
+    nextIds.push(id)
   } else {
-    cur.push(id)
-    setSelectedIds(cur)
+    nextIds = [...cur, id]
   }
+
+  // 约束：加入后队列精灵总数不能超过（普通精灵窝 + 学院精灵窝）总和
+  const totalCapacity = normalNests.value + academyNests.value
+  const activeUid = activeEntry.value?.uid
+  const allBlocks = []
+  Object.entries(selectedBlocksMap.value).forEach(([uid, ids]) => {
+    if (uid === activeUid) return // 当前窗口单独处理，避免首块未入库时漏算
+    const route = routes.value[uid]
+    if (!route) return
+    ;(ids || []).forEach((bid) => {
+      const b = (route.blocks || []).find((x) => x.id === bid)
+      if (b) allBlocks.push(b)
+    })
+  })
+  const activeRouteObj = routes.value[activeUid]
+  if (activeRouteObj) {
+    nextIds.forEach((bid) => {
+      const b = (activeRouteObj.blocks || []).find((x) => x.id === bid)
+      if (b) allBlocks.push(b)
+    })
+  }
+  const petKeys = new Set()
+  allBlocks.forEach((b) => {
+    if (b.father) petKeys.add(nodeKey(b.father))
+    if (b.mother) petKeys.add(nodeKey(b.mother))
+  })
+  if (petKeys.size > totalCapacity) {
+    showAlert(`加入后队列精灵数（${petKeys.size}）将超过精灵窝总数（普通 ${normalNests.value} + 学院 ${academyNests.value} = ${totalCapacity}），无法加入。`)
+    return
+  }
+
+  setSelectedIds(nextIds)
 }
 
 const queuedPets = computed(() => {
@@ -661,27 +706,40 @@ async function handleChildClick(node) {
 }
 
 function autoAssignAcademy() {
+  academyKeys.value = []
   if (!hasAcademy.value) return true
+  // 只有选中精灵数超过普通精灵窝数量（需要占用学院窝）时才分配
+  if (queuedPets.value.length <= normalNests.value) return true
+
   const groups = queueGroups.value.groups
-  if (groups.length <= 1) return true
   const blocks = getAllSelectedBlocks()
+  let key = null
+
+  // 1. 合并块父本方向 C
   const mergeBlock = blocks.find((b) => b.type === 'merge')
-  let uid = null
   if (mergeBlock) {
-    const mf = mergeBlock.father
-    if (mf && mf.uid && mf.direction === 'C') {
-      const g = groups.find((x) => x.male && nodeKey(x.male) === nodeKey(mf))
-      if (g && !g.females.some((f) => f.direction === 'C')) uid = mf.uid
-    }
-    if (!uid && mergeBlock.mother && mergeBlock.mother.uid && mergeBlock.mother.direction === 'C') uid = mergeBlock.mother.uid
+    if (mergeBlock.father && mergeBlock.father.direction === 'C') key = nodeKey(mergeBlock.father)
+    // 2. 合并块母本方向 C
+    if (!key && mergeBlock.mother && mergeBlock.mother.direction === 'C') key = nodeKey(mergeBlock.mother)
   }
-  if (!uid) {
+  // 3. 任意组里方向为 C 的母本
+  if (!key) {
     for (const g of groups) {
-      const fc = g.females.find((f) => f.uid && f.direction === 'C')
-      if (fc) { uid = fc.uid; break }
+      const fc = g.females.find((f) => f.direction === 'C')
+      if (fc) { key = nodeKey(fc); break }
     }
   }
-  if (uid) { academyKeys.value = [uid]; return true }
+  // 4. 传递性格的父本（R_C♂ / R_B♂），且组内其他母本都不负责传递性格
+  if (!key) {
+    for (const g of groups) {
+      const father = g.male
+      if (!father) continue
+      if (father.direction !== 'C' && father.direction !== 'B') continue
+      if (g.females.every((f) => f.direction !== 'C' && f.direction !== 'B')) { key = nodeKey(father); break }
+    }
+  }
+
+  if (key) { academyKeys.value = [key]; return true }
   showAlert('无法自动分配学院精灵窝：没有找到负责传递性格的精灵。')
   return false
 }
@@ -698,16 +756,19 @@ function continueSelect() {
 }
 
 function addQueueTab(g) {
-  const maleAcademy = g.male && g.male.uid && academyKeys.value.includes(g.male.uid)
-  const femaleAcademy = g.females.some((f) => academyKeys.value.includes(f.uid))
+  const warehouseUids = new Set(loadInventory().map((p) => p.uid).filter(Boolean))
+  const maleAcademy = g.male && academyKeys.value.includes(nodeKey(g.male))
+  const femaleAcademy = g.females.some((f) => academyKeys.value.includes(nodeKey(f)))
+  const academyCount = (maleAcademy || femaleAcademy) ? 1 : 0
   const tab = {
     id: Date.now() + Math.floor(Math.random() * 10000),
     name: g.male ? g.male.name : '队列',
-    nestCount: g.females.length + 1,
-    academyCount: (maleAcademy || femaleAcademy) ? 1 : 0,
+    nestCount: g.females.length + (academyCount ? 0 : 1),
+    academyCount,
     females: g.females.map((f) => ({
       instanceId: nextFemaleId(),
       id: f.raceId,
+      uid: f.uid || null,
       name: f.name,
       note: null,
       eggGroups: getEggGroups(f.raceId),
@@ -716,7 +777,7 @@ function addQueueTab(g) {
       personality: f.personality || null,
       medals: { body: f.body || null, voice: f.voice || null },
       priority: false,
-      useAcademy: academyKeys.value.includes(f.uid),
+      useAcademy: academyKeys.value.includes(nodeKey(f)),
     })),
     result: null,
     resultMales: [],
@@ -725,8 +786,9 @@ function addQueueTab(g) {
     maleCoverDetails: [],
     academyCoveredGroups: [],
     maleFilter: { personality: '', body: '', voice: '', shiny: false, personalityMode: 'personality', buffFilter: '' },
-    occupiedFemales: g.females.map((f) => f.uid).filter(Boolean),
-    occupiedMales: g.male && g.male.uid ? [g.male.uid] : [],
+    occupiedFemales: g.females.map((f) => f.uid).filter((u) => u && warehouseUids.has(u)),
+    occupiedMales: g.male && g.male.uid && warehouseUids.has(g.male.uid) ? [g.male.uid] : [],
+    queueKeys: [g.male ? nodeKey(g.male) : null, ...g.females.map((f) => nodeKey(f))].filter(Boolean),
     priorityPool: [],
     locked: true,
   }
@@ -761,16 +823,18 @@ async function joinBreeding() {
   const groups = queueGroups.value.groups.filter((g) => g.male)
   if (!groups.length) { showAlert('没有可加入的孵蛋任务。'); return }
 
-  const newUids = new Set()
+  const newKeys = new Set()
   groups.forEach((g) => {
-    if (g.male && g.male.uid) newUids.add(g.male.uid)
-    g.females.forEach((f) => { if (f.uid) newUids.add(f.uid) })
+    if (g.male) newKeys.add(nodeKey(g.male))
+    g.females.forEach((f) => { if (f) newKeys.add(nodeKey(f)) })
   })
 
   const used = breedingState.tabs.filter((t) => (t.females && t.females.length) || (t.resultMales && t.resultMales.length))
   const dupTabs = used.filter((t) => {
-    const uids = [...(t.occupiedFemales || []), ...(t.occupiedMales || [])]
-    return uids.some((u) => u && newUids.has(u))
+    const keys = (t.queueKeys && t.queueKeys.length)
+      ? t.queueKeys
+      : [...(t.occupiedFemales || []).map((u) => 'u:' + u), ...(t.occupiedMales || []).map((u) => 'u:' + u)]
+    return keys.some((k) => k && newKeys.has(k))
   })
   if (dupTabs.length) {
     const ok = await showConfirm('即将加入的窗口与已使用的窗口存在重复精灵，是否覆盖（删除这些重复的已使用窗口）？')
@@ -782,12 +846,15 @@ async function joinBreeding() {
   }
 
   const newNormal = groups.reduce((s, g) => s + g.females.length + 1, 0)
-  const newAcademy = groups.filter((g) => g.females.some((f) => academyKeys.value.includes(f.uid))).length
+  const newAcademy = groups.filter((g) =>
+    (g.male && academyKeys.value.includes(nodeKey(g.male))) ||
+    g.females.some((f) => academyKeys.value.includes(nodeKey(f)))
+  ).length
   const existNormal = breedingState.tabs.reduce((s, t) => s + (t.nestCount || 0), 0)
   const existAcademy = breedingState.tabs.reduce((s, t) => s + (t.academyCount || 0), 0)
   const newWin = groups.length
   const existWin = breedingState.tabs.length
-  if (existNormal + newNormal > 10 || (hasAcademy.value && existAcademy + newAcademy > 1) || existWin + newWin > 5) {
+  if (existNormal + (newNormal - newAcademy) > 10 || (hasAcademy.value && existAcademy + newAcademy > 1) || existWin + newWin > 5) {
     const ok = await showConfirm('即将加入的窗口会超出总精灵窝数量或窗口数量上限，是否覆盖（删除所有已使用窗口）？')
     if (!ok) return
     breedingState.tabs.splice(0, breedingState.tabs.length)

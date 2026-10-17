@@ -177,6 +177,8 @@ export function clearPlan() {
 
 // 孵化路线失效信号：仓库精灵改动后仅清空路线，不清空目标
 export const routeState = reactive({ revision: 0, pendingUids: [] })
+// 孵化路线结果（跨组件共享，用于导出/导入）
+export const routeStore = reactive({ map: {}, stamp: 0 })
 export function invalidateRoutes(uid = null) {
   if (uid == null) routeState.pendingUids = [null]
   else routeState.pendingUids.push(uid)

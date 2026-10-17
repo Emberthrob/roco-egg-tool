@@ -148,6 +148,8 @@ export function replaceTabs(newTabs, activeTabId) {
     occupiedFemales: t.occupiedFemales || [],
     occupiedMales: t.occupiedMales || [],
     priorityPool: t.priorityPool || [],
+    queueKeys: t.queueKeys || [],
+    locked: !!t.locked,
   }))
   breedingState.activeTabId = activeTabId != null ? activeTabId : ((newTabs && newTabs[0]) ? newTabs[0].id : 1)
 
