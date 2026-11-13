@@ -5057,7 +5057,9 @@
   {
     "id": 3625,
     "name": "小冥龙",
-    "egg_groups": [],
+    "egg_groups": [
+      1
+    ],
     "evolves_from_id": null,
     "has_shiny": null,
     "special_tags": []
@@ -6541,6 +6543,26 @@
       13
     ],
     "evolves_from_id": 3795,
+    "has_shiny": 105,
+    "special_tags": []
+  },
+  {
+    "id": 3797,
+    "name": "云梦豚",
+    "egg_groups": [
+      13
+    ],
+    "evolves_from_id": null,
+    "has_shiny": 105,
+    "special_tags": []
+  },
+  {
+    "id": 3798,
+    "name": "长江豚",
+    "egg_groups": [
+      13
+    ],
+    "evolves_from_id": 3797,
     "has_shiny": 105,
     "special_tags": []
   },
