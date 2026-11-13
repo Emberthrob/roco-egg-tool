@@ -20,13 +20,15 @@
     "101": "S1 暗夜拾光",
     "102": "S2 狂欢怪谈",
     "103": "S3 铅字梦幻",
-    "104": "S4 月涌狂想"
+    "104": "S4 月涌狂想",
+    "105": "S5 圣龙宝藏"
   },
    "season_colors": {
     "101": "linear-gradient(135deg, #8B3EF7, #8D9C83)",
     "102": "linear-gradient(135deg, #B82121, #000000)",
     "103": "linear-gradient(135deg, #CC78AA, #8FCF8C)",
-    "104": "linear-gradient(135deg, #6A56D0, #FFFFFF)"
+    "104": "linear-gradient(135deg, #6A56D0, #FFFFFF)",
+    "105": "linear-gradient(135deg, #23A597, #FA4343)"
   },
   "special_tags": {
     "1001": "只有雄性",
